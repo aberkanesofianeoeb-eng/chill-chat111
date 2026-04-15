@@ -121,7 +121,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, timestamp: Date.now() })
             });
-            const data = await res.json();
+            const data = await res.json().catch(() => ({ error: 'Server returned invalid response' }));
             if (!res.ok) throw new Error(data.error || 'Registration failed');
             sessionStorage.setItem('participantName', name);
             nameInput.disabled = true;
@@ -138,27 +138,42 @@
     }
 
     async function refreshData() {
-        try {
-            const res = await fetch(`${API_URL}/participants`);
-            const data = await res.json();
-            const count = data.count || 0;
-            document.getElementById('totalCount').textContent = count;
-            if (data.winner) {
-                showWinner(data.winner);
+    try {
+        const res = await fetch(`${API_URL}/participants`);
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        const count = data.count || 0;
+        document.getElementById('totalCount').textContent = count;
+        if (data.winner) {
+            showWinner(data.winner);
+        }
+        if (document.getElementById('adminView').style.display !== 'none') {
+            const participants = data.participants ? Object.values(data.participants) : [];
+            document.getElementById('adminCount').textContent = participants.length;
+            const listDiv = document.getElementById('participantList');
+            if (participants.length === 0) {
+                listDiv.innerHTML = '<p>No participants yet</p>';
+            } else {
+                listDiv.innerHTML = participants.map((p, i) => `<div class="participant-item">${i+1}. ${escapeHtml(p.name)}</div>`).join('');
             }
-            // Update admin panel if visible
-            if (document.getElementById('adminView').style.display !== 'none') {
-                const participants = data.participants ? Object.values(data.participants) : [];
-                document.getElementById('adminCount').textContent = participants.length;
-                const listDiv = document.getElementById('participantList');
-                if (participants.length === 0) {
-                    listDiv.innerHTML = '<p>No participants yet</p>';
-                } else {
-                    listDiv.innerHTML = participants.map((p, i) => `<div class="participant-item">${i+1}. ${p.name}</div>`).join('');
-                }
-            }
-        } catch (err) { console.error(err); }
+        }
+    } catch (err) {
+        console.error('Refresh error:', err);
+        // Don't show alert to user – just log
+        document.getElementById('totalCount').textContent = '?';
     }
+}
+
+function escapeHtml(str) {
+    return str.replace(/[&<>]/g, function(m) {
+        if (m === '&') return '&amp;';
+        if (m === '<') return '&lt;';
+        if (m === '>') return '&gt;';
+        return m;
+    });
+}
 
     function showWinner(winnerName) {
         document.getElementById('winnerInfo').style.display = 'block';
