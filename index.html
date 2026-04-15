@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chill&chat speaking club</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #333;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 500px;
+            width: 90%;
+        }
+        h1 { color: #4a5568; margin-bottom: 30px; font-size: 2.5em; }
+        .qr-code { width: 250px; height: 250px; margin: 0 auto 20px; border: 1px solid #ddd; border-radius: 10px; }
+        input[type="text"] {
+            width: 100%; padding: 15px; font-size: 1.1em; border: 2px solid #e2e8f0; border-radius: 10px;
+            margin-bottom: 20px; text-align: center;
+        }
+        button {
+            background: linear-gradient(135deg, #48bb78, #38a169); color: white; border: none;
+            padding: 15px 40px; font-size: 1.2em; border-radius: 50px; cursor: pointer;
+            width: 100%; margin-bottom: 10px;
+        }
+        button:disabled { background: #a0aec0; cursor: not-allowed; }
+        .reset-btn, .draw-btn { background: linear-gradient(135deg, #ed8936, #dd6b20); margin-top: 10px; }
+        .draw-btn { background: linear-gradient(135deg, #e67e22, #d35400); }
+        .result { margin-top: 20px; padding: 20px; border-radius: 10px; font-weight: bold; }
+        .winner { background: linear-gradient(135deg, #48bb78, #38a169); color: white; animation: celebrate 1s infinite; }
+        .stats { margin-top: 30px; padding: 20px; background: #f7fafc; border-radius: 10px; }
+        @keyframes celebrate { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+        .scan-complete, .full-message { background: #bee3f8; color: #2b6cb0; border-radius: 10px; padding: 15px; margin-top: 20px; }
+        .full-message { background: #feebc8; color: #c05621; }
+        .admin-panel { background: #fef5e7; padding: 20px; border-radius: 15px; margin-top: 20px; border: 2px solid #f39c12; }
+        .participant-list { background: #ecf0f1; max-height: 300px; overflow-y: auto; padding: 15px; border-radius: 10px; text-align: left; margin: 10px 0; }
+        .participant-item { background: white; padding: 10px; margin: 5px 0; border-radius: 5px; }
+    </style>
+</head>
+<body>
+<div class="container" id="participantView">
+    <h1>Chill&chat speaking club</h1>
+    <div class="qr-section">
+        <img id="qrImage" class="qr-code" alt="QR Code">
+        <p>Scan QR code with your phone</p>
+    </div>
+    <div id="registerForm">
+        <input type="text" id="participantName" placeholder="Enter your full name" maxlength="50">
+        <button id="registerBtn">Register</button>
+    </div>
+    <div id="result" class="result" style="display: none;"></div>
+    <div id="scanComplete" class="scan-complete" style="display: none;">✅ Registration complete! Waiting for lottery...</div>
+    <div class="stats">
+        <h3>Live Stats</h3>
+        <div>Participants: <span id="totalCount">0</span>/20</div>
+        <div id="winnerInfo" style="display: none;">🎉 Lottery Winner: <span id="winnerName"></span></div>
+    </div>
+</div>
+
+<div class="container" id="adminView" style="display: none;">
+    <h1>Admin Panel</h1>
+    <div class="admin-panel">
+        <h2>📊 Registration Dashboard</h2>
+        <div>Total Participants: <strong id="adminCount">0</strong>/20</div>
+        <h3 style="margin-top: 20px;">Registered Participants:</h3>
+        <div class="participant-list" id="participantList">
+            <p>No participants yet</p>
+        </div>
+        <button id="drawWinnerBtn" class="draw-btn">🎲 Draw Winner Now</button>
+        <button id="resetBtn" class="reset-btn">🔄 Reset Game</button>
+    </div>
+</div>
+
+<script>
+    const API_URL = '/api';
+    let pollInterval = null;
+
+    window.addEventListener('load', () => {
+        generateQRCode();
+        document.getElementById('registerBtn').addEventListener('click', registerParticipant);
+        checkAdminAccess();
+    });
+
+    function generateQRCode() {
+        const url = window.location.href;
+        document.getElementById('qrImage').src = `https://quickchart.io/qr?text=${encodeURIComponent(url)}&size=250`;
+    }
+
+    function checkAdminAccess() {
+        if (sessionStorage.getItem('adminMode') === 'true') {
+            loadAdminPanel();
+        } else {
+            loadParticipantView();
+        }
+    }
+
+    async function registerParticipant() {
+        const nameInput = document.getElementById('participantName');
+        const btn = document.getElementById('registerBtn');
+        const name = nameInput.value.trim();
+        if (!name) { alert('Please enter your name'); return; }
+
+        btn.disabled = true;
+        btn.textContent = 'Registering...';
+
+        try {
+            const res = await fetch(`${API_URL}/participants`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, timestamp: Date.now() })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Registration failed');
+            sessionStorage.setItem('participantName', name);
+            nameInput.disabled = true;
+            document.getElementById('registerForm').style.opacity = '0.7';
+            document.getElementById('scanComplete').style.display = 'block';
+            await refreshData();
+        } catch (err) {
+            alert(err.message);
+            nameInput.value = '';
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Register';
+        }
+    }
+
+    async function refreshData() {
+        try {
+            const res = await fetch(`${API_URL}/participants`);
+            const data = await res.json();
+            const count = data.count || 0;
+            document.getElementById('totalCount').textContent = count;
+            if (data.winner) {
+                showWinner(data.winner);
+            }
+            // Update admin panel if visible
+            if (document.getElementById('adminView').style.display !== 'none') {
+                const participants = data.participants ? Object.values(data.participants) : [];
+                document.getElementById('adminCount').textContent = participants.length;
+                const listDiv = document.getElementById('participantList');
+                if (participants.length === 0) {
+                    listDiv.innerHTML = '<p>No participants yet</p>';
+                } else {
+                    listDiv.innerHTML = participants.map((p, i) => `<div class="participant-item">${i+1}. ${p.name}</div>`).join('');
+                }
+            }
+        } catch (err) { console.error(err); }
+    }
+
+    function showWinner(winnerName) {
+        document.getElementById('winnerInfo').style.display = 'block';
+        document.getElementById('winnerName').textContent = winnerName;
+        const resultDiv = document.getElementById('result');
+        resultDiv.innerHTML = `🎉 LOTTERY WINNER: ${winnerName}! 🎉<br>Free session awarded! Participants reset.`;
+        resultDiv.className = 'result winner';
+        resultDiv.style.display = 'block';
+        document.getElementById('scanComplete').style.display = 'none';
+        // Auto-refresh after 3 seconds
+        setTimeout(() => refreshData(), 3000);
+    }
+
+    async function drawWinner() {
+        try {
+            const res = await fetch(`${API_URL}/participants`, {
+                method: 'PUT',
+                headers: { 'x-admin-key': 'admin123' }
+            });
+            const data = await res.json();
+            if (data.winner) {
+                alert(`🎉 Winner: ${data.winner}! The participant list has been reset.`);
+                await refreshData();
+            } else {
+                alert('No participants to draw from.');
+            }
+        } catch (err) {
+            alert('Error drawing winner: ' + err.message);
+        }
+    }
+
+    async function adminReset() {
+        const password = prompt('Enter admin password:');
+        if (password !== 'admin123') { alert('Wrong password'); return; }
+        if (!confirm('Reset all data? This cannot be undone.')) return;
+        try {
+            await fetch(`${API_URL}/participants`, {
+                method: 'DELETE',
+                headers: { 'x-admin-key': 'admin123' }
+            });
+            sessionStorage.clear();
+            alert('✅ Game reset successfully!');
+            location.reload();
+        } catch (err) {
+            alert('Reset failed: ' + err.message);
+        }
+    }
+
+    function loadParticipantView() {
+        document.getElementById('participantView').style.display = 'block';
+        document.getElementById('adminView').style.display = 'none';
+        const savedName = sessionStorage.getItem('participantName');
+        if (savedName) {
+            document.getElementById('participantName').value = savedName;
+            document.getElementById('participantName').disabled = true;
+            document.getElementById('registerBtn').disabled = true;
+            document.getElementById('registerForm').style.opacity = '0.7';
+            document.getElementById('scanComplete').style.display = 'block';
+        }
+        refreshData();
+        if (pollInterval) clearInterval(pollInterval);
+        pollInterval = setInterval(refreshData, 2000);
+    }
+
+    function loadAdminPanel() {
+        document.getElementById('adminView').style.display = 'block';
+        document.getElementById('participantView').style.display = 'none';
+        document.getElementById('drawWinnerBtn').addEventListener('click', drawWinner);
+        document.getElementById('resetBtn').addEventListener('click', adminReset);
+        refreshData();
+        if (pollInterval) clearInterval(pollInterval);
+        pollInterval = setInterval(refreshData, 1500);
+    }
+
+    // Admin hotkey: Ctrl+Shift+A
+    document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.shiftKey && e.key === 'A') {
+            const pass = prompt('Admin password:');
+            if (pass === 'admin123') {
+                sessionStorage.setItem('adminMode', 'true');
+                loadAdminPanel();
+            } else {
+                alert('Wrong password');
+            }
+        }
+    });
+</script>
+</body>
+</html>
